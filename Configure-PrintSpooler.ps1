@@ -1,20 +1,22 @@
 <#
 .SYNOPSIS
-    Script used to mitigate the July 2021 PrintNightmare CVE-2021-34527 exploit
-which allows any domain user to remotely elevate to SYSTEM on any Windows
-host running the Print Spooler service. The exploit works by dropping a DLL
-in a subdirectory under C:\Windows\System32\spool\drivers.
+    This script is intended to mitigate Print Spooler attacks (specifically PrintNightmare CVE-2021-34527) 
+by disabling the Spooler service where it is not needed (non-Print Server servers & DCs). Note: The 
+Spooler service on Domain Controllers is responsible for pruning of printer objects published to 
+Active Directory. The goal is to only make the minimum amount of changes based on the type of system.
+Exceptions can be managed using an Active Directory security group.
 
     Author: Thomas Connell
 
 .DESCRIPTION
     This script will enable Print Service debug logging and stop and disable the Print Spooler
 service on all Windows Server operating systems that do not have the Print Server feature
-installed. If the Spooler service is found to be running on non-Print Servers, it will restrict
-SYSTEM access to the Spooler drivers directory. If you need to perform configuration changes
-that require the spooler service to write to this directory, the ACL can be removed temporarily and it
-will be re-added the next time the mitigation script runs. This is designed to be deployed to
-all Windows clients via a GPO Preference Scheduled Task which runs under the SYSTEM context.
+installed. If the Spooler service is found to be running on non-Print Servers, and the Spooler 
+service is allowed to accept client connections, it will restrict SYSTEM access to the Spooler 
+drivers directory. If you need to perform configuration changes that require the spooler service 
+to write to this directory, the ACL can be removed temporarily and it will be re-added the next 
+time the mitigation script runs. This is designed to be deployed to all Windows clients via a GPO 
+Preference Scheduled Task which runs under the SYSTEM context.
 
 Recommendation: Set the 'Allow Print Spooler to accept client connections' GPO setting to disabled 
 on all domain workstations to disable inbound remote printing. This mitigates the remote code execution
@@ -47,7 +49,7 @@ they need to share printers.
 .PARAMETER RemoveACL
     Remove the SYSTEM deny ACE on the spool/drivers folder if it exists.
 .PARAMETER AlwaysSetACL
-    Set the SYSTEM deny ACE on the spool/drivers folder if it does not exists.
+    Set the SYSTEM deny ACE on the spool/drivers folder if it does not exist.
 .PARAMETER RestartSpooler
     If the Print Spooler service is running for more than 24 hours, this switch will restart it. Some changes to
     the Spooler service configuration require the service to be restarted.
@@ -68,8 +70,10 @@ they need to share printers.
     PS C:\> Configure-PrintSpooler.ps1 -RemoveACL
     - Remove the SYSTEM deny ACE on the spool/drivers folder if it exists.
 .EXAMPLE
-    PS C:\> PowerShell.exe -File "\\Path\To\Script\Configure-PrintSpooler.ps1" -EnablePrintServiceLog}
-    - Method to launch the script from a file share without any user interaction
+    PS C:\> PowerShell.exe -File "\\Path\To\Script\Configure-PrintSpooler.ps1" -EnablePrintServiceLog
+    - Method to launch the script from a file share without any user interaction.
+    - It can be deployed to an entire domain via a GPO preference scheduled task that runs as SYSTEM.
+    - Host the script somewhere all computers on your domain can access it (e.g. NETLOGON share).
 #>
 param
 (
