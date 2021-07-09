@@ -79,10 +79,16 @@ they need to share printers.
     PS C:\> Configure-PrintSpooler.ps1 -RemoveACL
     - Remove the SYSTEM deny ACE on the spool/drivers folder if it exists.
 .EXAMPLE
-    PS C:\> PowerShell.exe -File "\\Path\To\Script\Configure-PrintSpooler.ps1" -EnablePrintServiceLog
-    - Method to launch the script from a file share without any user interaction.
+    PS C:\> PowerShell.exe -File "\\Path\To\Script\Configure-PrintSpooler.ps1"
+             -CriticalChangeOrFailureLogDir "\\Path\To\CriticalEventLogDir"
+             -ServerLogDir "\\Path\To\PrintServerLogDir"
+             -PrintServerLogDir "\\Path\To\PrintServerLogDir" -EnablePrintServiceLog
+             -SecurePointAndPrint -PointAndPrintADExceptionGroup "PrintSpooler-PointAndPrint-Computer-Exceptions"
+             -SpoolerADExceptionGroup "PrintSpooler-Computer-Exceptions" -DisableRemotePrint -RestartSpooler
+    - Example for running the script from a file share (Combine lines into a single command).
     - It can be deployed to an entire domain via a GPO preference scheduled task that runs as SYSTEM.
     - Host the script somewhere all computers on your domain can access it (e.g. NETLOGON share).
+    - Run it daily or hourly and monitor the log files.
 #>
 param
 (
@@ -133,8 +139,15 @@ if ($Role -eq 1) {$OSType = "workstation"}
 if ($Role -eq 3) {$OSType = "memberserver"}
 if ($Role -ge 4) {$OSType = "domaincontroller"}
 
-# Detect if print services feature is installed
+# Detect if print server feature is installed
 $PrintServer = Get-WmiObject -Query "select * FROM Win32_ServerFeature WHERE ID=135" -ErrorAction SilentlyContinue
+
+# Detect if any printers are shared from this computer - Not all print servers have the feature installed
+$SharedPrinters = Get-Printer | Where-Object {$_.Shared -eq $true} | Select-Object -First 10 Name,Type,DriverName,PortName,Shared
+
+if (($SharedPrinters.count -gt 1) -and ($OSType -eq "memberserver")) {
+    $PrintServer = $true
+}
 
 # Transcript logging
 if (($OSType -ne "workstation") -and $ServerLogDir) {$LogDir = $ServerLogDir}
@@ -150,6 +163,12 @@ Start-Transcript $LogFile -Append
 if ($WhatIf) {
     [string]$message = "WhatIf switch used; No changes are actually being made."
     Write-Message $message info
+}
+
+if (($SharedPrinters.count -gt 1) -and ($OSType -eq "memberserver")) {
+    [string]$message = "This system is a server with more than one shared printers. It will be tagged as a Print Server. The first 10 found will be saved to the transcript log."
+    Write-Message $message info
+    $SharedPrinters | Format-Table
 }
 
 # Check the 'Allow Print Spooler to accept client connections' GPO setting (disabled = 2)
@@ -254,9 +273,9 @@ if ($PrintServer -and ($OSType -eq "domaincontroller")) {
 }
 
 if ($PrintServer) {
-    # Configure the RestrictDriverInstallationToAdministrators registry value to prevent non-administrators from installing printer drivers on a print server.
+    # Ensure the Spooler service is running and configure the RestrictDriverInstallationToAdministrators registry value to prevent non-administrators from installing printer drivers on a print server.
     # https://support.microsoft.com/topic/31b91c02-05bc-4ada-a7ea-183b129578a7
-    [string]$message = "This host has been detected as a Print Server."
+    [string]$message = "This host has been detected as a Print Server either from the windows feature being installed or it having shared printers."
     Write-Message $message info
 
     # Verify the Print Spooler service is running on the print server
@@ -440,7 +459,7 @@ if ($RestartSpooler) {
                 }
             }
         } else {
-            [string]$message = "Print Spooler service is within the 1 day restart threshold; Service has been running since $((Get-Process spoolsv).StartTime)"
+            [string]$message = "Print Spooler service is within the 1 day restart threshold and will not be restarted; Service has been running since $((Get-Process spoolsv).StartTime)"
             Write-Message $message info
         }
     } else {
